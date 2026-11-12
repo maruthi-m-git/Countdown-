@@ -6,6 +6,8 @@
         android:required="true" />
 
     <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
         android:label="Fire Countdown"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
