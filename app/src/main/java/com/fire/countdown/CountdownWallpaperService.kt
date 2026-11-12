@@ -16,6 +16,7 @@ import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -46,10 +47,9 @@ class CountdownWallpaperService : WallpaperService() {
             letterSpacing = 0.3f
         }
 
-        // ---- realistic fire simulation ----
-        private val fireW = 110
+        // ---- procedural fire (noise based) ----
+        private val fireW = 128
         private var fireH = 0
-        private var heat = FloatArray(0)
         private var pixels = IntArray(0)
         private var fireBmp: Bitmap? = null
         private val fireRect = RectF()
@@ -58,18 +58,22 @@ class CountdownWallpaperService : WallpaperService() {
             xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
         }
         private val lut = IntArray(256)
-        private val cool = 0.011f
+        private val colH = FloatArray(fireW)
+        private val tbl = FloatArray(65536)
 
         private val embers = ArrayList<Ember>()
         private val start = System.currentTimeMillis()
 
         init {
-            val stops = floatArrayOf(0f, 0.18f, 0.35f, 0.55f, 0.75f, 0.9f, 1f)
+            val rnd = java.util.Random(7)
+            for (i in tbl.indices) tbl[i] = rnd.nextFloat()
+
+            val stops = floatArrayOf(0f, 0.18f, 0.35f, 0.5f, 0.68f, 0.85f, 1f)
             val r = intArrayOf(0, 70, 175, 255, 255, 255, 255)
-            val g = intArrayOf(0, 8, 28, 95, 160, 215, 245)
-            val b = intArrayOf(0, 0, 0, 0, 10, 70, 190)
+            val g = intArrayOf(0, 8, 28, 100, 175, 225, 248)
+            val b = intArrayOf(0, 0, 0, 0, 10, 80, 200)
             for (i in 0 until 256) {
-                val v = i / 255f
+                val v = (i / 255f).pow(0.85f)
                 var k = 0
                 while (k < stops.size - 2 && v > stops[k + 1]) k++
                 val f = ((v - stops[k]) / (stops[k + 1] - stops[k])).coerceIn(0f, 1f)
@@ -79,6 +83,26 @@ class CountdownWallpaperService : WallpaperService() {
                     (b[k] + (b[k + 1] - b[k]) * f).toInt()
                 )
             }
+        }
+
+        private fun noise(x: Float, y: Float): Float {
+            val xf = Math.floor(x.toDouble()).toInt()
+            val yf = Math.floor(y.toDouble()).toInt()
+            val fx = x - xf
+            val fy = y - yf
+            val sx = fx * fx * (3f - 2f * fx)
+            val sy = fy * fy * (3f - 2f * fy)
+            val x0 = xf and 255
+            val x1 = (xf + 1) and 255
+            val y0 = (yf and 255) shl 8
+            val y1 = ((yf + 1) and 255) shl 8
+            val a = tbl[y0 or x0]
+            val b = tbl[y0 or x1]
+            val c = tbl[y1 or x0]
+            val d = tbl[y1 or x1]
+            val top = a + (b - a) * sx
+            val bot = c + (d - c) * sx
+            return top + (bot - top) * sy
         }
 
         private val tick = object : Runnable {
@@ -96,51 +120,65 @@ class CountdownWallpaperService : WallpaperService() {
                 intArrayOf(Color.parseColor("#050507"), Color.parseColor("#120806"), Color.parseColor("#2A0A03")),
                 floatArrayOf(0f, 0.65f, 1f), Shader.TileMode.CLAMP
             )
-            val regionH = h * 0.5f
+            val regionH = h * 0.52f
             fireH = (fireW * regionH / w).toInt().coerceAtLeast(40)
-            heat = FloatArray(fireW * fireH)
             pixels = IntArray(fireW * fireH)
             fireBmp = Bitmap.createBitmap(fireW, fireH, Bitmap.Config.ARGB_8888)
             fireRect.set(0f, h - regionH, w.toFloat(), h.toFloat())
-            for (i in 0 until 200) stepFire(i * 0.03f)
 
             embers.clear()
             repeat(30) { embers.add(newEmber(true)) }
             draw()
         }
 
-        private fun stepFire(t: Float) {
+        private fun computeFire(t: Float) {
             val fw = fireW
             val fh = fireH
-            val baseRow = (fh - 1) * fw
             for (x in 0 until fw) {
-                val s1 = 0.5f + 0.5f * sin(x * 0.21f + t * 1.7f)
-                val s2 = 0.6f + 0.4f * sin(x * 0.067f - t * 0.9f + 1.3f)
-                val v = 0.3f + 0.9f * s1 * s2 + (Random.nextFloat() - 0.5f) * 0.3f
-                heat[baseRow + x] = v.coerceIn(0f, 1.2f)
+                colH[x] = noise((x + 0.5f) / fw * 3f + 40f, t * 0.35f)
             }
-            for (y in 0 until fh - 1) {
-                val row = y * fw
-                val below = (y + 1) * fw
+            var i = 0
+            for (row in 0 until fh) {
+                val yy = 1f - (row + 0.5f) / fh
                 for (x in 0 until fw) {
-                    val r = Random.nextInt(8)
-                    var sx = if (r == 0) x - 1 else if (r == 1) x + 1 else x
-                    if (sx < 0) sx = 0 else if (sx >= fw) sx = fw - 1
-                    val v = heat[below + sx] - cool * Random.nextFloat() * 2f
-                    heat[row + x] = if (v > 0f) v else 0f
+                    val xx = (x + 0.5f) / fw
+                    val wx = noise(xx * 3f + 5f, yy * 2.2f - t * 1.1f) - 0.5f
+                    val wy = noise(xx * 3f + 9f, yy * 2.2f - t * 1.1f + 4f) - 0.5f
+                    val px = xx * 8.5f + wx * 2.0f
+                    val py = yy * 3.4f - t * 1.9f + wy * 1.1f
+
+                    var s = 0f
+                    var amp = 0.5f
+                    var f = 1f
+                    for (o in 0 until 4) {
+                        s += amp * noise(px * f + 17f, py * f + 31f)
+                        amp *= 0.5f
+                        f *= 2f
+                    }
+                    val fb = s / 0.9375f
+
+                    var rg = 0f
+                    amp = 0.5f
+                    f = 1f
+                    for (o in 0 until 3) {
+                        val n = 1f - abs(2f * noise(px * f + 51f, py * f + 7f) - 1f)
+                        rg += amp * n * n
+                        amp *= 0.5f
+                        f *= 2f
+                    }
+                    rg /= 0.875f
+
+                    val n = 0.55f * fb + 0.45f * rg
+                    var v = n * 2.4f - yy * (1.85f - 1.2f * colH[x]) - 0.52f
+                    if (v < 0f) v = 0f else if (v > 1f) v = 1f
+                    pixels[i++] = lut[(v * 255f).toInt()]
                 }
             }
         }
 
         private fun drawFire(c: Canvas, t: Float) {
             val bmp = fireBmp ?: return
-            stepFire(t)
-            stepFire(t + 0.016f)
-            for (i in pixels.indices) {
-                val v = heat[i]
-                val idx = if (v <= 0f) 0 else if (v >= 1f) 255 else (v * 255f).toInt()
-                pixels[i] = lut[idx]
-            }
+            computeFire(t)
             bmp.setPixels(pixels, 0, fireW, 0, 0, fireW, fireH)
             c.drawBitmap(bmp, null, fireRect, firePaint)
         }
