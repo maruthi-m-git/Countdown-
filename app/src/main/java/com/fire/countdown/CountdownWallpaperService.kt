@@ -16,7 +16,6 @@ import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -103,7 +102,7 @@ class CountdownWallpaperService : WallpaperService() {
             pixels = IntArray(fireW * fireH)
             fireBmp = Bitmap.createBitmap(fireW, fireH, Bitmap.Config.ARGB_8888)
             fireRect.set(0f, h - regionH, w.toFloat(), h.toFloat())
-            for (i in 0 until 150) stepFire(i * 0.03f)
+            for (i in 0 until 200) stepFire(i * 0.03f)
 
             embers.clear()
             repeat(30) { embers.add(newEmber(true)) }
@@ -117,15 +116,15 @@ class CountdownWallpaperService : WallpaperService() {
             for (x in 0 until fw) {
                 val s1 = 0.5f + 0.5f * sin(x * 0.21f + t * 1.7f)
                 val s2 = 0.6f + 0.4f * sin(x * 0.067f - t * 0.9f + 1.3f)
-                val v = 0.35f + 0.75f * s1 * s2 + (Random.nextFloat() - 0.5f) * 0.25f
-                heat[baseRow + x] = v.coerceIn(0f, 1.15f)
+                val v = 0.3f + 0.9f * s1 * s2 + (Random.nextFloat() - 0.5f) * 0.3f
+                heat[baseRow + x] = v.coerceIn(0f, 1.2f)
             }
             for (y in 0 until fh - 1) {
-                val shift = (sin(t * 1.7f + y * 0.11f) * 1.4f).roundToInt()
                 val row = y * fw
                 val below = (y + 1) * fw
                 for (x in 0 until fw) {
-                    var sx = x + shift + Random.nextInt(3) - 1
+                    val r = Random.nextInt(8)
+                    var sx = if (r == 0) x - 1 else if (r == 1) x + 1 else x
                     if (sx < 0) sx = 0 else if (sx >= fw) sx = fw - 1
                     val v = heat[below + sx] - cool * Random.nextFloat() * 2f
                     heat[row + x] = if (v > 0f) v else 0f
@@ -236,14 +235,14 @@ class CountdownWallpaperService : WallpaperService() {
             c.drawText(if (done) "TIME'S UP" else "TIME LEFT", cx, cy - w * 0.22f, labelP)
 
             if (mode == 1) {
-                val str = String.format("%02d:%02d", totalH, mm)
-                timeP.textSize = w * 0.26f
+                val str = String.format("%02d:%02d:%02d", totalH, mm, ss)
+                timeP.textSize = w * 0.2f
                 val mw = timeP.measureText(str)
-                val maxW = w * 0.9f
+                val maxW = w * 0.92f
                 if (mw > maxW) timeP.textSize = timeP.textSize * maxW / mw
                 c.drawText(str, cx, cy + w * 0.04f, timeP)
-                labelP.textSize = w * 0.04f
-                c.drawText("HOURS : MINUTES", cx, cy + w * 0.16f, labelP)
+                labelP.textSize = w * 0.035f
+                c.drawText("HOURS : MIN : SEC", cx, cy + w * 0.15f, labelP)
             } else if (d > 0) {
                 timeP.textSize = w * 0.16f
                 val numStr = d.toString()
