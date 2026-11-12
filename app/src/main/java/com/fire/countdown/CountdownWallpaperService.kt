@@ -16,6 +16,8 @@ import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.random.Random
 
+internal class Ember(var x: Float, var y: Float, var vy: Float, var size: Float, var phase: Float)
+
 class CountdownWallpaperService : WallpaperService() {
 
     override fun onCreateEngine(): Engine = FireEngine()
@@ -43,7 +45,6 @@ class CountdownWallpaperService : WallpaperService() {
             letterSpacing = 0.3f
         }
 
-        private class Ember(var x: Float, var y: Float, var vy: Float, var size: Float, var phase: Float)
         private val embers = ArrayList<Ember>()
         private val path = Path()
         private val start = System.currentTimeMillis()
