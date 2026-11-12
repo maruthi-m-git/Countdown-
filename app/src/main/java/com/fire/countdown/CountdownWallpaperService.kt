@@ -1,11 +1,14 @@
 package com.fire.countdown
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
@@ -13,6 +16,7 @@ import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -30,8 +34,6 @@ class CountdownWallpaperService : WallpaperService() {
         private var h = 0
 
         private val bg = Paint()
-        private val flame = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val flameCore = Paint(Paint.ANTI_ALIAS_FLAG)
         private val ember = Paint(Paint.ANTI_ALIAS_FLAG)
         private val timeP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#FFE9B0")
@@ -45,9 +47,40 @@ class CountdownWallpaperService : WallpaperService() {
             letterSpacing = 0.3f
         }
 
+        // ---- realistic fire simulation ----
+        private val fireW = 110
+        private var fireH = 0
+        private var heat = FloatArray(0)
+        private var pixels = IntArray(0)
+        private var fireBmp: Bitmap? = null
+        private val fireRect = RectF()
+        private val firePaint = Paint().apply {
+            isFilterBitmap = true
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+        }
+        private val lut = IntArray(256)
+        private val cool = 0.011f
+
         private val embers = ArrayList<Ember>()
-        private val path = Path()
         private val start = System.currentTimeMillis()
+
+        init {
+            val stops = floatArrayOf(0f, 0.18f, 0.35f, 0.55f, 0.75f, 0.9f, 1f)
+            val r = intArrayOf(0, 70, 175, 255, 255, 255, 255)
+            val g = intArrayOf(0, 8, 28, 95, 160, 215, 245)
+            val b = intArrayOf(0, 0, 0, 0, 10, 70, 190)
+            for (i in 0 until 256) {
+                val v = i / 255f
+                var k = 0
+                while (k < stops.size - 2 && v > stops[k + 1]) k++
+                val f = ((v - stops[k]) / (stops[k + 1] - stops[k])).coerceIn(0f, 1f)
+                lut[i] = Color.rgb(
+                    (r[k] + (r[k + 1] - r[k]) * f).toInt(),
+                    (g[k] + (g[k + 1] - g[k]) * f).toInt(),
+                    (b[k] + (b[k + 1] - b[k]) * f).toInt()
+                )
+            }
+        }
 
         private val tick = object : Runnable {
             override fun run() {
@@ -61,27 +94,61 @@ class CountdownWallpaperService : WallpaperService() {
             w = width; h = height
             bg.shader = LinearGradient(
                 0f, 0f, 0f, h.toFloat(),
-                intArrayOf(Color.parseColor("#050507"), Color.parseColor("#120806"), Color.parseColor("#3A0E04")),
+                intArrayOf(Color.parseColor("#050507"), Color.parseColor("#120806"), Color.parseColor("#2A0A03")),
                 floatArrayOf(0f, 0.65f, 1f), Shader.TileMode.CLAMP
             )
-            flame.shader = LinearGradient(
-                0f, h.toFloat(), 0f, h * 0.62f,
-                intArrayOf(Color.parseColor("#E6FFB000"), Color.parseColor("#CCFF5A00"), Color.parseColor("#00B01000")),
-                floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP
-            )
-            flameCore.shader = LinearGradient(
-                0f, h.toFloat(), 0f, h * 0.78f,
-                intArrayOf(Color.parseColor("#F0FFF2B0"), Color.parseColor("#00FFB000")),
-                floatArrayOf(0f, 1f), Shader.TileMode.CLAMP
-            )
+            val regionH = h * 0.5f
+            fireH = (fireW * regionH / w).toInt().coerceAtLeast(40)
+            heat = FloatArray(fireW * fireH)
+            pixels = IntArray(fireW * fireH)
+            fireBmp = Bitmap.createBitmap(fireW, fireH, Bitmap.Config.ARGB_8888)
+            fireRect.set(0f, h - regionH, w.toFloat(), h.toFloat())
+            for (i in 0 until 150) stepFire(i * 0.03f)
+
             embers.clear()
-            repeat(45) { embers.add(newEmber(true)) }
+            repeat(30) { embers.add(newEmber(true)) }
             draw()
+        }
+
+        private fun stepFire(t: Float) {
+            val fw = fireW
+            val fh = fireH
+            val baseRow = (fh - 1) * fw
+            for (x in 0 until fw) {
+                val s1 = 0.5f + 0.5f * sin(x * 0.21f + t * 1.7f)
+                val s2 = 0.6f + 0.4f * sin(x * 0.067f - t * 0.9f + 1.3f)
+                val v = 0.35f + 0.75f * s1 * s2 + (Random.nextFloat() - 0.5f) * 0.25f
+                heat[baseRow + x] = v.coerceIn(0f, 1.15f)
+            }
+            for (y in 0 until fh - 1) {
+                val shift = (sin(t * 1.7f + y * 0.11f) * 1.4f).roundToInt()
+                val row = y * fw
+                val below = (y + 1) * fw
+                for (x in 0 until fw) {
+                    var sx = x + shift + Random.nextInt(3) - 1
+                    if (sx < 0) sx = 0 else if (sx >= fw) sx = fw - 1
+                    val v = heat[below + sx] - cool * Random.nextFloat() * 2f
+                    heat[row + x] = if (v > 0f) v else 0f
+                }
+            }
+        }
+
+        private fun drawFire(c: Canvas, t: Float) {
+            val bmp = fireBmp ?: return
+            stepFire(t)
+            stepFire(t + 0.016f)
+            for (i in pixels.indices) {
+                val v = heat[i]
+                val idx = if (v <= 0f) 0 else if (v >= 1f) 255 else (v * 255f).toInt()
+                pixels[i] = lut[idx]
+            }
+            bmp.setPixels(pixels, 0, fireW, 0, 0, fireW, fireH)
+            c.drawBitmap(bmp, null, fireRect, firePaint)
         }
 
         private fun newEmber(anywhere: Boolean): Ember = Ember(
             Random.nextFloat() * w,
-            if (anywhere) Random.nextFloat() * h else h + 10f,
+            if (anywhere) h * (0.5f + Random.nextFloat() * 0.5f) else h + 10f,
             2f + Random.nextFloat() * 4f,
             2f + Random.nextFloat() * 4f,
             Random.nextFloat() * 6.28f
@@ -118,40 +185,15 @@ class CountdownWallpaperService : WallpaperService() {
             }
         }
 
-        private fun drawFlames(c: Canvas, t: Float) {
-            val cols = 9
-            val colW = w / cols.toFloat()
-            for (i in 0..cols) {
-                val cx = i * colW
-                val n = sin(t * 3.1f + i * 1.7f) * 0.5f + sin(t * 5.3f + i * 0.9f) * 0.5f
-                val height = h * (0.20f + 0.07f * n + 0.03f * (i % 3))
-                val sway = sin(t * 2f + i) * colW * 0.35f
-                path.reset()
-                path.moveTo(cx - colW * 0.9f, h.toFloat())
-                path.quadTo(cx - colW * 0.3f + sway * 0.4f, h - height * 0.55f, cx + sway, h - height)
-                path.quadTo(cx + colW * 0.3f + sway * 0.4f, h - height * 0.55f, cx + colW * 0.9f, h.toFloat())
-                path.close()
-                c.drawPath(path, flame)
-
-                val ih = height * 0.55f
-                path.reset()
-                path.moveTo(cx - colW * 0.45f, h.toFloat())
-                path.quadTo(cx - colW * 0.1f + sway * 0.3f, h - ih * 0.55f, cx + sway * 0.6f, h - ih)
-                path.quadTo(cx + colW * 0.1f + sway * 0.3f, h - ih * 0.55f, cx + colW * 0.45f, h.toFloat())
-                path.close()
-                c.drawPath(path, flameCore)
-            }
-        }
-
         private fun drawEmbers(c: Canvas, t: Float) {
             for (e in embers) {
                 e.y -= e.vy
                 e.x += sin(t * 2f + e.phase) * 1.2f
-                if (e.y < -10f) {
+                if (e.y < h * 0.3f) {
                     val n = newEmber(false)
                     e.x = n.x; e.y = n.y; e.vy = n.vy; e.size = n.size; e.phase = n.phase
                 }
-                val life = (e.y / h).coerceIn(0f, 1f)
+                val life = ((e.y - h * 0.3f) / (h * 0.7f)).coerceIn(0f, 1f)
                 val alpha = (life * 255).toInt().coerceIn(0, 255)
                 ember.color = Color.argb(alpha, 255, (120 + 100 * life).toInt().coerceAtMost(255), 30)
                 c.drawCircle(e.x, e.y, e.size * (0.4f + life), ember)
@@ -161,12 +203,14 @@ class CountdownWallpaperService : WallpaperService() {
         private fun render(c: Canvas) {
             val t = (System.currentTimeMillis() - start) / 1000f
             c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
-            drawFlames(c, t)
+            drawFire(c, t)
             drawEmbers(c, t)
 
-            val target = getSharedPreferences("cd", Context.MODE_PRIVATE).getLong("target", 0L)
+            val prefs = getSharedPreferences("cd", Context.MODE_PRIVATE)
+            val target = prefs.getLong("target", 0L)
+            val mode = prefs.getInt("mode", 0)
             val cx = w / 2f
-            val cy = h * 0.40f
+            val cy = h * 0.36f
 
             labelP.textSize = w * 0.045f
             if (target == 0L) {
@@ -184,17 +228,33 @@ class CountdownWallpaperService : WallpaperService() {
             val hh = (diff % 86400) / 3600
             val mm = (diff % 3600) / 60
             val ss = diff % 60
+            val totalH = diff / 3600
 
             val glow = 0.75f + 0.25f * abs(sin(t * 2.2f))
             timeP.setShadowLayer(w * 0.05f * glow, 0f, 0f, Color.parseColor("#FF5A00"))
 
             c.drawText(if (done) "TIME'S UP" else "TIME LEFT", cx, cy - w * 0.22f, labelP)
 
-            if (d > 0) {
-                timeP.textSize = w * 0.16f
-                c.drawText("$d", cx - w * 0.18f, cy - w * 0.02f, timeP)
+            if (mode == 1) {
+                val str = String.format("%02d:%02d", totalH, mm)
+                timeP.textSize = w * 0.26f
+                val mw = timeP.measureText(str)
+                val maxW = w * 0.9f
+                if (mw > maxW) timeP.textSize = timeP.textSize * maxW / mw
+                c.drawText(str, cx, cy + w * 0.04f, timeP)
                 labelP.textSize = w * 0.04f
-                c.drawText(if (d == 1L) "DAY" else "DAYS", cx + w * 0.2f, cy - w * 0.02f, labelP)
+                c.drawText("HOURS : MINUTES", cx, cy + w * 0.16f, labelP)
+            } else if (d > 0) {
+                timeP.textSize = w * 0.16f
+                val numStr = d.toString()
+                val numW = timeP.measureText(numStr)
+                labelP.textSize = w * 0.045f
+                val lab = if (d == 1L) "DAY" else "DAYS"
+                val labW = labelP.measureText(lab)
+                val gap = w * 0.04f
+                val startX = cx - (numW + gap + labW) / 2f
+                c.drawText(numStr, startX + numW / 2f, cy - w * 0.02f, timeP)
+                c.drawText(lab, startX + numW + gap + labW / 2f, cy - w * 0.02f, labelP)
                 timeP.textSize = w * 0.15f
                 c.drawText(String.format("%02d:%02d:%02d", hh, mm, ss), cx, cy + w * 0.18f, timeP)
             } else {
