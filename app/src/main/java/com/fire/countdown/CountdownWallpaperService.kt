@@ -46,6 +46,12 @@ class CountdownWallpaperService : WallpaperService() {
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.3f
         }
+        private val taskP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#FFD27A")
+            typeface = Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.05f
+        }
 
         // ---- procedural fire (noise based) ----
         private val fireW = 128
@@ -237,6 +243,16 @@ class CountdownWallpaperService : WallpaperService() {
             }
         }
 
+        private fun drawTask(c: Canvas, task: String, y: Float) {
+            if (task.isBlank()) return
+            taskP.textSize = w * 0.07f
+            val maxW = w * 0.9f
+            val mw = taskP.measureText(task)
+            if (mw > maxW) taskP.textSize = taskP.textSize * maxW / mw
+            taskP.setShadowLayer(w * 0.02f, 0f, 0f, Color.parseColor("#FF5A00"))
+            c.drawText(task, w / 2f, y, taskP)
+        }
+
         private fun render(c: Canvas) {
             val t = (System.currentTimeMillis() - start) / 1000f
             c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
@@ -246,6 +262,7 @@ class CountdownWallpaperService : WallpaperService() {
             val prefs = getSharedPreferences("cd", Context.MODE_PRIVATE)
             val target = prefs.getLong("target", 0L)
             val mode = prefs.getInt("mode", 0)
+            val task = (prefs.getString("task", "") ?: "").trim()
             val cx = w / 2f
             val cy = h * 0.36f
 
@@ -281,6 +298,7 @@ class CountdownWallpaperService : WallpaperService() {
                 c.drawText(str, cx, cy + w * 0.04f, timeP)
                 labelP.textSize = w * 0.035f
                 c.drawText("HOURS : MIN : SEC", cx, cy + w * 0.15f, labelP)
+                drawTask(c, task, cy + w * 0.29f)
             } else if (d > 0) {
                 timeP.textSize = w * 0.16f
                 val numStr = d.toString()
@@ -294,9 +312,11 @@ class CountdownWallpaperService : WallpaperService() {
                 c.drawText(lab, startX + numW + gap + labW / 2f, cy - w * 0.02f, labelP)
                 timeP.textSize = w * 0.15f
                 c.drawText(String.format("%02d:%02d:%02d", hh, mm, ss), cx, cy + w * 0.18f, timeP)
+                drawTask(c, task, cy + w * 0.34f)
             } else {
                 timeP.textSize = w * 0.17f
                 c.drawText(String.format("%02d:%02d:%02d", hh, mm, ss), cx, cy, timeP)
+                drawTask(c, task, cy + w * 0.15f)
             }
         }
     }
