@@ -9,8 +9,13 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.text.Editable
+import android.text.InputFilter
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -49,12 +54,37 @@ class MainActivity : Activity() {
             setPadding(0, 40, 0, 40)
         }
 
+        val taskLabel = TextView(this).apply {
+            text = "Task name (shown under the time)"
+            textSize = 14f
+            setTextColor(Color.parseColor("#FF8A2A"))
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, 10)
+        }
+
+        val taskInput = EditText(this).apply {
+            hint = "e.g. Maths exam"
+            setHintTextColor(Color.parseColor("#80FFD27A"))
+            setTextColor(Color.parseColor("#FFE9B0"))
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+            filters = arrayOf(InputFilter.LengthFilter(40))
+            setText(prefs().getString("task", ""))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+                override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    prefs().edit().putString("task", s?.toString() ?: "").apply()
+                }
+            })
+        }
+
         val formatLabel = TextView(this).apply {
             text = "Display format"
             textSize = 14f
             setTextColor(Color.parseColor("#FF8A2A"))
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, 10)
+            setPadding(0, 40, 0, 10)
         }
 
         val group = RadioGroup(this).apply {
@@ -68,7 +98,7 @@ class MainActivity : Activity() {
         }
         val r1 = RadioButton(this).apply {
             id = 102
-            text = "Hours + minutes only (58:09)"
+            text = "Hours + minutes + seconds (58:59:12)"
             setTextColor(Color.parseColor("#FFD27A"))
         }
         group.addView(r0)
@@ -88,8 +118,15 @@ class MainActivity : Activity() {
             setOnClickListener { openWallpaperPicker() }
         }
 
+        val full = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+
         root.addView(title)
         root.addView(status)
+        root.addView(taskLabel)
+        root.addView(taskInput, full)
         root.addView(formatLabel)
         root.addView(group)
         root.addView(pick)
