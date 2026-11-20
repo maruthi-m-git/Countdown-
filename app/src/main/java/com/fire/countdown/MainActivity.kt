@@ -424,10 +424,6 @@ class MainActivity : Activity() {
         val items = arrayOf("Lock screen only", "Home screen only", "Both screens")
         AlertDialog.Builder(this)
             .setTitle("Pause on which screen?")
-            .setMessage(
-                "This puts your phone's default wallpaper back on that screen and stops " +
-                    "Fire Countdown from running there."
-            )
             .setItems(items) { _, which ->
                 val flag = when (which) {
                     0 -> WallpaperManager.FLAG_LOCK
@@ -439,7 +435,7 @@ class MainActivity : Activity() {
                     prefs().edit().putBoolean("pendingLockOnly", false).apply()
                     Toast.makeText(
                         this,
-                        "Paused. Tap a Set button to resume.",
+                        "Paused. Default wallpaper is back. Tap a Set button to resume.",
                         Toast.LENGTH_LONG
                     ).show()
                 } catch (e: Exception) {
