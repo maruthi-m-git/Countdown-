@@ -9,6 +9,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Typeface
@@ -40,11 +41,14 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var photoInfo: TextView
+    private lateinit var homeInfo: TextView
     private lateinit var bgGroup: RadioGroup
     private val reqPhoto = 301
+    private val reqHome = 302
 
     private fun prefs() = getSharedPreferences("cd", MODE_PRIVATE)
     private fun photoFile() = File(filesDir, "bg.jpg")
+    private fun homeFile() = File(filesDir, "home.jpg")
 
     private fun sectionLabel(t: String, top: Int): TextView = TextView(this).apply {
         text = t
@@ -58,6 +62,12 @@ class MainActivity : Activity() {
         id = rid
         text = label
         setTextColor(Color.parseColor("#FFD27A"))
+    }
+
+    private fun infoText(): TextView = TextView(this).apply {
+        textSize = 13f
+        setTextColor(Color.parseColor("#B0FFD27A"))
+        setPadding(0, 0, 0, 10)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,11 +135,8 @@ class MainActivity : Activity() {
             }
         }
 
-        photoInfo = TextView(this).apply {
-            textSize = 13f
-            setTextColor(Color.parseColor("#B0FFD27A"))
-            setPadding(0, 0, 0, 10)
-        }
+        photoInfo = infoText()
+        homeInfo = infoText()
 
         val pick = Button(this).apply {
             text = "Pick date & time"
@@ -137,7 +144,11 @@ class MainActivity : Activity() {
         }
         val choosePhoto = Button(this).apply {
             text = "Choose photo"
-            setOnClickListener { choosePhoto() }
+            setOnClickListener { chooseImage(reqPhoto) }
+        }
+        val chooseHome = Button(this).apply {
+            text = "Choose home screen picture"
+            setOnClickListener { chooseImage(reqHome) }
         }
         val setLock = Button(this).apply {
             text = "Set on lock screen only"
@@ -171,6 +182,9 @@ class MainActivity : Activity() {
         root.addView(sectionLabel("Apply wallpaper", 40))
         root.addView(setLock, full)
         root.addView(setBoth, full)
+        root.addView(sectionLabel("Home screen picture (used only for lock screen only)", 40))
+        root.addView(homeInfo)
+        root.addView(chooseHome, full)
         root.addView(sectionLabel("Pause", 40))
         root.addView(pause, full)
 
@@ -183,12 +197,27 @@ class MainActivity : Activity() {
         refreshStatus()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // finish the "lock screen only" setup after the system wallpaper screen
+        if (prefs().getBoolean("pendingLockOnly", false) && isOursActive()) {
+            finishLockOnly()
+        }
+    }
+
+    private fun isOursActive(): Boolean {
+        val info = WallpaperManager.getInstance(this).wallpaperInfo
+        return info != null && info.packageName == packageName
+    }
+
     private fun refreshStatus() {
         val t = prefs().getLong("target", 0L)
         status.text = if (t == 0L) "No target set yet.\nTap 'Pick date & time'."
         else "Counting down to\n" +
             SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(t))
         photoInfo.text = if (photoFile().exists()) "A photo is saved." else "No photo chosen yet."
+        homeInfo.text = if (homeFile().exists()) "A home screen picture is saved."
+        else "None chosen: the phone's built-in wallpaper will be used."
     }
 
     private fun pickDateTime() {
@@ -205,22 +234,47 @@ class MainActivity : Activity() {
         }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show()
     }
 
-    private fun choosePhoto() {
+    private fun chooseImage(code: Int) {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
         }
-        startActivityForResult(i, reqPhoto)
+        startActivityForResult(i, code)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == reqPhoto && resultCode == RESULT_OK) {
-            data?.data?.let { saveBackground(it) }
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        if (requestCode == reqPhoto) {
+            saveImage(uri, photoFile()) { ok ->
+                if (ok) {
+                    prefs().edit()
+                        .putLong("bgVer", System.currentTimeMillis())
+                        .putInt("bgMode", 1)
+                        .apply()
+                    bgGroup.check(202)
+                }
+                Toast.makeText(
+                    this,
+                    if (ok) "Photo saved" else "Could not use that photo",
+                    Toast.LENGTH_SHORT
+                ).show()
+                refreshStatus()
+            }
+        } else if (requestCode == reqHome) {
+            saveImage(uri, homeFile()) { ok ->
+                Toast.makeText(
+                    this,
+                    if (ok) "Home screen picture saved" else "Could not use that picture",
+                    Toast.LENGTH_SHORT
+                ).show()
+                refreshStatus()
+            }
         }
     }
 
-    private fun saveBackground(uri: Uri) {
+    private fun saveImage(uri: Uri, dest: File, onDone: (Boolean) -> Unit) {
         Thread {
             var ok = false
             try {
@@ -252,39 +306,104 @@ class MainActivity : Activity() {
                         val m = Matrix().apply { postRotate(deg) }
                         bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
                     }
-                    FileOutputStream(photoFile()).use { bmp!!.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-                    prefs().edit()
-                        .putLong("bgVer", System.currentTimeMillis())
-                        .putInt("bgMode", 1)
-                        .apply()
+                    FileOutputStream(dest).use { bmp!!.compress(Bitmap.CompressFormat.JPEG, 90, it) }
                     ok = true
                 }
             } catch (e: Exception) {
             } catch (e: OutOfMemoryError) {
             }
-            runOnUiThread {
-                if (ok) {
-                    bgGroup.check(202)
-                    Toast.makeText(this, "Photo saved", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Could not use that photo", Toast.LENGTH_SHORT).show()
-                }
-                refreshStatus()
-            }
+            runOnUiThread { onDone(ok) }
         }.start()
     }
 
     private fun applyWallpaper(lockOnly: Boolean) {
-        val choice = if (lockOnly) "'Lock screen'" else "'Home screen and lock screen'"
-        AlertDialog.Builder(this)
-            .setTitle("One more step")
-            .setMessage(
-                "On the next screen tap 'Set wallpaper', then choose $choice.\n\n" +
-                    "Android decides where a live wallpaper applies, so the final choice is made there."
-            )
-            .setPositiveButton("Continue") { _, _ -> openWallpaperPicker() }
-            .setNegativeButton("Cancel", null)
-            .show()
+        if (!lockOnly) {
+            prefs().edit().putBoolean("pendingLockOnly", false).apply()
+            AlertDialog.Builder(this)
+                .setTitle("One more step")
+                .setMessage(
+                    "On the next screen tap 'Set wallpaper', then choose " +
+                        "'Home screen and lock screen' if your phone asks."
+                )
+                .setPositiveButton("Continue") { _, _ -> openWallpaperPicker() }
+                .setNegativeButton("Cancel", null)
+                .show()
+            return
+        }
+
+        if (isOursActive()) {
+            AlertDialog.Builder(this)
+                .setTitle("Lock screen only")
+                .setMessage(
+                    "Your home screen will switch to a normal picture and the countdown " +
+                        "will stay on the lock screen."
+                )
+                .setPositiveButton("Do it") { _, _ -> finishLockOnly() }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            prefs().edit().putBoolean("pendingLockOnly", true).apply()
+            AlertDialog.Builder(this)
+                .setTitle("Lock screen only")
+                .setMessage(
+                    "Your phone can only apply a live wallpaper to the home screen, or to home " +
+                        "and lock together. So:\n\n" +
+                        "1. On the next screen tap 'Set wallpaper' and choose " +
+                        "'Home screen and lock screen'.\n" +
+                        "2. Come back to this app (open it if it doesn't return by itself). " +
+                        "It will then put a normal picture on your home screen so the " +
+                        "countdown stays only on the lock screen."
+                )
+                .setPositiveButton("Continue") { _, _ -> openWallpaperPicker() }
+                .setNegativeButton("Cancel") { _, _ ->
+                    prefs().edit().putBoolean("pendingLockOnly", false).apply()
+                }
+                .show()
+        }
+    }
+
+    private fun homeBitmap(): Bitmap {
+        val f = homeFile()
+        if (f.exists()) {
+            BitmapFactory.decodeFile(f.path)?.let { return it }
+        }
+        val wm = WallpaperManager.getInstance(this)
+        val d = try {
+            wm.getBuiltInDrawable(WallpaperManager.FLAG_SYSTEM)
+        } catch (e: Exception) {
+            null
+        }
+        if (d != null) {
+            val bw = if (d.intrinsicWidth > 0) d.intrinsicWidth else 1080
+            val bh = if (d.intrinsicHeight > 0) d.intrinsicHeight else 2400
+            val b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            val cv = Canvas(b)
+            d.setBounds(0, 0, bw, bh)
+            d.draw(cv)
+            return b
+        }
+        val b = Bitmap.createBitmap(1080, 2400, Bitmap.Config.ARGB_8888)
+        Canvas(b).drawColor(Color.parseColor("#0B0B0F"))
+        return b
+    }
+
+    private fun finishLockOnly() {
+        prefs().edit().putBoolean("pendingLockOnly", false).apply()
+        try {
+            val wm = WallpaperManager.getInstance(this)
+            wm.setBitmap(homeBitmap(), null, true, WallpaperManager.FLAG_SYSTEM)
+            Toast.makeText(
+                this,
+                "Done. Check your screens: countdown should be on the lock screen only.",
+                Toast.LENGTH_LONG
+            ).show()
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "This phone would not split the screens.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun openWallpaperPicker() {
@@ -302,22 +421,33 @@ class MainActivity : Activity() {
     }
 
     private fun pauseWallpaper() {
-        val wm = WallpaperManager.getInstance(this)
-        val info = wm.wallpaperInfo
-        if (info == null || info.packageName != packageName) {
-            Toast.makeText(this, "Fire Countdown is not your current wallpaper", Toast.LENGTH_LONG).show()
-            return
-        }
-        try {
-            wm.clear(WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
-            Toast.makeText(
-                this,
-                "Paused. Default wallpaper is back. Tap a Set button to resume.",
-                Toast.LENGTH_LONG
-            ).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Pick another wallpaper to pause", Toast.LENGTH_LONG).show()
-            startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER))
-        }
+        val items = arrayOf("Lock screen only", "Home screen only", "Both screens")
+        AlertDialog.Builder(this)
+            .setTitle("Pause on which screen?")
+            .setMessage(
+                "This puts your phone's default wallpaper back on that screen and stops " +
+                    "Fire Countdown from running there."
+            )
+            .setItems(items) { _, which ->
+                val flag = when (which) {
+                    0 -> WallpaperManager.FLAG_LOCK
+                    1 -> WallpaperManager.FLAG_SYSTEM
+                    else -> WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
+                }
+                try {
+                    WallpaperManager.getInstance(this).clear(flag)
+                    prefs().edit().putBoolean("pendingLockOnly", false).apply()
+                    Toast.makeText(
+                        this,
+                        "Paused. Tap a Set button to resume.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Pick another wallpaper to pause", Toast.LENGTH_LONG).show()
+                    startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER))
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 }
