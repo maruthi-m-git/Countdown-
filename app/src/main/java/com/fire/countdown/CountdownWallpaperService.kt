@@ -2,12 +2,14 @@ package com.fire.countdown
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -15,7 +17,9 @@ import android.os.Handler
 import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.view.SurfaceHolder
+import java.io.File
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
@@ -52,6 +56,11 @@ class CountdownWallpaperService : WallpaperService() {
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.05f
         }
+
+        // ---- user photo background ----
+        private var bgBitmap: Bitmap? = null
+        private var loadedVer = -1L
+        private var usingPhoto = false
 
         // ---- procedural fire (noise based) ----
         private val fireW = 128
@@ -114,7 +123,7 @@ class CountdownWallpaperService : WallpaperService() {
         private val tick = object : Runnable {
             override fun run() {
                 draw()
-                if (visible) handler.postDelayed(this, 33)
+                if (visible) handler.postDelayed(this, if (usingPhoto) 100L else 33L)
             }
         }
 
@@ -132,9 +141,48 @@ class CountdownWallpaperService : WallpaperService() {
             fireBmp = Bitmap.createBitmap(fireW, fireH, Bitmap.Config.ARGB_8888)
             fireRect.set(0f, h - regionH, w.toFloat(), h.toFloat())
 
+            // force the photo to be re-fitted to the new size
+            bgBitmap?.recycle()
+            bgBitmap = null
+            loadedVer = -1L
+
             embers.clear()
             repeat(30) { embers.add(newEmber(true)) }
             draw()
+        }
+
+        private fun loadBackground(ver: Long) {
+            loadedVer = ver
+            bgBitmap?.recycle()
+            bgBitmap = null
+            val f = File(filesDir, "bg.jpg")
+            if (!f.exists() || w == 0 || h == 0) return
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(f.path, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= w && bounds.outHeight / (sample * 2) >= h) sample *= 2
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                val src = BitmapFactory.decodeFile(f.path, opts) ?: return
+                val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val cv = Canvas(out)
+                val scale = max(w.toFloat() / src.width, h.toFloat() / src.height)
+                val sw = w / scale
+                val sh = h / scale
+                val sl = (src.width - sw) / 2f
+                val st = (src.height - sh) / 2f
+                cv.drawBitmap(
+                    src,
+                    Rect(sl.toInt(), st.toInt(), (sl + sw).toInt(), (st + sh).toInt()),
+                    Rect(0, 0, w, h),
+                    Paint(Paint.FILTER_BITMAP_FLAG)
+                )
+                cv.drawColor(Color.argb(90, 0, 0, 0))
+                src.recycle()
+                bgBitmap = out
+            } catch (e: Exception) {
+            } catch (e: OutOfMemoryError) {
+            }
         }
 
         private fun computeFire(t: Float) {
@@ -212,6 +260,8 @@ class CountdownWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             handler.removeCallbacks(tick)
+            bgBitmap?.recycle()
+            bgBitmap = null
         }
 
         private fun draw() {
@@ -255,14 +305,32 @@ class CountdownWallpaperService : WallpaperService() {
 
         private fun render(c: Canvas) {
             val t = (System.currentTimeMillis() - start) / 1000f
-            c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
-            drawFire(c, t)
-            drawEmbers(c, t)
 
             val prefs = getSharedPreferences("cd", Context.MODE_PRIVATE)
             val target = prefs.getLong("target", 0L)
             val mode = prefs.getInt("mode", 0)
             val task = (prefs.getString("task", "") ?: "").trim()
+            val bgMode = prefs.getInt("bgMode", 0)
+            val bgVer = prefs.getLong("bgVer", 0L)
+
+            if (bgMode == 1) {
+                if (loadedVer != bgVer) loadBackground(bgVer)
+            } else if (bgBitmap != null) {
+                bgBitmap?.recycle()
+                bgBitmap = null
+                loadedVer = -1L
+            }
+            val photo = if (bgMode == 1) bgBitmap else null
+            usingPhoto = photo != null
+
+            if (photo != null) {
+                c.drawBitmap(photo, 0f, 0f, null)
+            } else {
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
+                drawFire(c, t)
+                drawEmbers(c, t)
+            }
+
             val cx = w / 2f
             val cy = h * 0.36f
 
